@@ -12,7 +12,7 @@ TagManager:
   - Water
   - UI
   - Ground
-  - 
+  - ParticleCatcher
   - 
   - 
   - 
@@ -38,6 +38,9 @@ TagManager:
   - 
   - 
   m_SortingLayers:
+  - name: Trails
+    uniqueID: 2642582621
+    locked: 0
   - name: Default
     uniqueID: 0
     locked: 0

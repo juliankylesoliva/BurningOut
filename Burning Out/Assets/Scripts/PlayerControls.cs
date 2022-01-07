@@ -1,6 +1,8 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.UI;
+using TMPro;
 
 public class PlayerControls : MonoBehaviour
 {
@@ -9,6 +11,7 @@ public class PlayerControls : MonoBehaviour
     SpriteRenderer sprite;
 
     /* EDITOR VARIABLES */
+    [Header("Editor Variables")]
     [SerializeField] int currentHealth = 200;
     [SerializeField] int maximumHealth = 200;
     [SerializeField] int healthRegenRate = 1;
@@ -20,6 +23,7 @@ public class PlayerControls : MonoBehaviour
     [SerializeField] Color speedLimitCharColor;
 
     [SerializeField] float jumpSpeed = 8f;
+    [SerializeField] float wallSlideSpeed = 12f;
     [SerializeField] float risingGravity = 1f;
     [SerializeField] float fallingGravity = 3f;
 
@@ -33,17 +37,29 @@ public class PlayerControls : MonoBehaviour
     [SerializeField] float blastJumpSpeed = 16f;
 
     /* DRAG AND DROP */
+    [Header("Drag and Drop")]
     [SerializeField] Transform groundCheckObject;
     [SerializeField] Transform wallCheckObjectR;
     [SerializeField] Transform wallCheckObjectL;
+    [SerializeField] TMP_Text healthText;
+    [SerializeField] Slider healthSlider;
+    [SerializeField] TMP_Text speedText;
+    [SerializeField] TrailRenderer speedTrail;
+    [SerializeField] GameObject burstParticles;
+    [SerializeField] GameObject postBurstParticles;
+    [SerializeField] GameObject wallSlideParticles;
+    [SerializeField] ParticleSystem burstReadyParticles;
 
     /* SCRIPT VARIABLES */
     private bool isDead = false;
     private bool isGrounded = false;
+    private bool isSliding = false;
+    private bool isTouchingWallR = false;
+    private bool isTouchingWallL = false;
     private bool isTouchingWall = false;
     private bool isBlastJumping = false;
     private bool isBlastJumpCooldownActive = false;
-    private int midairBlastJumps = 0;
+    private int consecutiveBlastJumps = 0;
 
     void Awake()
     {
@@ -61,12 +77,16 @@ public class PlayerControls : MonoBehaviour
         DoBlastJump();
         DoFalling();
         DoHealthDrainRegen();
-        Debug.Log(currentHealth);
+        DoUIUpdate();
     }
 
     void DoMovement()
     {
-        if (isDead) { return; }
+        if (isDead)
+        {
+            rb.simulated = false;
+            return;
+        }
 
         if (!isBlastJumping)
         {
@@ -95,6 +115,15 @@ public class PlayerControls : MonoBehaviour
         if (isGrounded && isBlastJumpCooldownActive)
         {
             isBlastJumpCooldownActive = false;
+            if (burstReadyParticles != null && !isDead)
+            {
+                burstReadyParticles.Play();
+            }
+        }
+
+        if (isGrounded)
+        {
+            consecutiveBlastJumps = 0;
         }
     }
 
@@ -105,11 +134,17 @@ public class PlayerControls : MonoBehaviour
         isTouchingWall = false;
         Collider2D[] collidersR = Physics2D.OverlapCircleAll(wallCheckObjectR.position, groundCheckRadius, groundLayer);
         Collider2D[] collidersL = Physics2D.OverlapCircleAll(wallCheckObjectL.position, groundCheckRadius, groundLayer);
-        isTouchingWall = (collidersR.Length > 0 || collidersL.Length > 0);
+        isTouchingWallR = collidersR.Length > 0;
+        isTouchingWallL = collidersL.Length > 0;
+        isTouchingWall = (isTouchingWallR || isTouchingWallL);
 
         if (isTouchingWall && isBlastJumpCooldownActive)
         {
             isBlastJumpCooldownActive = false;
+            if (burstReadyParticles != null && !isDead)
+            {
+                burstReadyParticles.Play();
+            }
         }
     }
 
@@ -134,6 +169,17 @@ public class PlayerControls : MonoBehaviour
         else
         {
             rb.gravityScale = risingGravity;
+        }
+
+        ParticleSystem tempParticleSys = null;
+        if (!isGrounded && rb.velocity.y < 0f && isTouchingWall && Input.GetKey(KeyCode.Z))
+        {
+            rb.velocity = new Vector2(0f, -wallSlideSpeed);
+            isSliding = true;
+        }
+        else
+        {
+            isSliding = false;
         }
     }
 
@@ -183,39 +229,44 @@ public class PlayerControls : MonoBehaviour
             verticalDirection = 0f;
         }
 
-        if (horizontalDirection == 0f && verticalDirection == 0f)
-        {
-            verticalDirection = 1f;
-        }
-        else if (verticalDirection == 0f)
+        if (horizontalDirection != 0f && verticalDirection == 0f)
         {
             verticalDirection = 0.5f;
         }
-        else
+
+        GameObject postBurstObj = null;
+        if (horizontalDirection != 0f || verticalDirection != 0f)
         {
-            /* Nothing */
+            rb.velocity = new Vector2(horizontalDirection * blastJumpSpeed, verticalDirection * blastJumpSpeed);
+            Instantiate(burstParticles, this.transform.position, Quaternion.identity);
+            postBurstObj = Instantiate(postBurstParticles, this.transform);
+
+            ++consecutiveBlastJumps;
+
+            changeHealthBy((int)(-(baseBlastJumpHealthCost + (baseBlastJumpHealthCost * Mathf.Pow(2f, (float)consecutiveBlastJumps)))));
         }
-
-        rb.velocity = new Vector2(horizontalDirection * blastJumpSpeed, verticalDirection * blastJumpSpeed);
-
-        if (!isGrounded)
-        {
-            ++midairBlastJumps;
-        }
-
-        changeHealthBy(-(baseBlastJumpHealthCost + (baseBlastJumpHealthCost * midairBlastJumps)));
 
         yield return new WaitForSeconds(blastJumpRecoveryTime);
 
         isBlastJumping = false;
         isBlastJumpCooldownActive = true;
+        if (postBurstObj != null)
+        {
+            postBurstObj.transform.parent = null;
+        }
 
         yield return new WaitForSeconds(blastJumpCooldownTime);
 
         if (isBlastJumpCooldownActive)
         {
             isBlastJumpCooldownActive = false;
+            if (burstReadyParticles != null && !isDead)
+            {
+                burstReadyParticles.Play();
+            }
         }
+
+        yield break;
     }
 
     void DoHealthDrainRegen()
@@ -225,11 +276,13 @@ public class PlayerControls : MonoBehaviour
         if (rb.velocity.magnitude >= speedLimit)
         {
             sprite.color = speedLimitCharColor;
+            if (speedTrail != null) { speedTrail.emitting = true; }
             changeHealthBy(-speedHealthDrainRate);
         }
         else
         {
             sprite.color = Color.white;
+            if (speedTrail != null) { speedTrail.emitting = false; }
             changeHealthBy(healthRegenRate);
         }
     }
@@ -254,5 +307,13 @@ public class PlayerControls : MonoBehaviour
                 isDead = true;
             }
         }
+    }
+
+    void DoUIUpdate()
+    {
+        healthSlider.maxValue = maximumHealth;
+        healthSlider.value = currentHealth;
+        healthText.text = $"{currentHealth} HP";
+        speedText.text = $"Speed: {(int)rb.velocity.magnitude} / {speedLimit}";
     }
 }
