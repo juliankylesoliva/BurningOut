@@ -5,13 +5,8 @@ using Cinemachine;
 
 public class ScreenShake : MonoBehaviour
 {
-    CinemachineVirtualCamera vCam;
+    [SerializeField] CinemachineVirtualCamera vCam;
     private float shakeTime;
-
-    void Awake()
-    {
-        vCam = this.gameObject.GetComponent<CinemachineVirtualCamera>();
-    }
 
     void Update()
     {

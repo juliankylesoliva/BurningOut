@@ -9,6 +9,9 @@ public class PlayerControls : MonoBehaviour
     /* COMPONENTS */
     Rigidbody2D rb;
     SpriteRenderer sprite;
+    Scorekeeper score;
+    ScreenShake shake;
+    SoundPlayer sounds;
 
     /* EDITOR VARIABLES */
     [Header("Editor Variables")]
@@ -41,8 +44,6 @@ public class PlayerControls : MonoBehaviour
 
     /* DRAG AND DROP */
     [Header("Drag and Drop")]
-    [SerializeField] ScreenShake screenShakeObject;
-    [SerializeField] Scorekeeper scorekeeperObject;
     [SerializeField] Transform groundCheckObject;
     [SerializeField] Transform wallCheckObjectR;
     [SerializeField] Transform wallCheckObjectL;
@@ -50,6 +51,8 @@ public class PlayerControls : MonoBehaviour
     [SerializeField] Slider healthSlider;
     [SerializeField] TMP_Text speedText;
     [SerializeField] Slider speedSlider;
+    [SerializeField] Image redFXPanel;
+    [SerializeField] GameObject losePanel;
     [SerializeField] TrailRenderer speedTrail;
     [SerializeField] TrailRenderer preBlastTrail;
     [SerializeField] GameObject burstParticles;
@@ -75,7 +78,9 @@ public class PlayerControls : MonoBehaviour
     {
         rb = this.gameObject.GetComponent<Rigidbody2D>();
         sprite = this.gameObject.GetComponent<SpriteRenderer>();
-        if (scorekeeperObject != null) { scorekeeperObject.ResetScorekeeper(); }
+        shake = this.gameObject.GetComponent<ScreenShake>();
+        score = this.gameObject.GetComponent<Scorekeeper>();
+        sounds = this.gameObject.GetComponent<SoundPlayer>();
         respawnPosition = this.transform.position;
         Application.targetFrameRate = 60;
     }
@@ -91,6 +96,7 @@ public class PlayerControls : MonoBehaviour
         DoFalling();
         DoHealthDrainRegen();
         DoUIUpdate();
+        DoTimerStart();
     }
 
     void DoMovement()
@@ -139,6 +145,7 @@ public class PlayerControls : MonoBehaviour
             isBlastJumpCooldownActive = false;
             if (burstReadyParticles != null && !isDead)
             {
+                sounds.PlaySound(3, 0.7f);
                 burstReadyParticles.Play();
             }
         }
@@ -167,6 +174,7 @@ public class PlayerControls : MonoBehaviour
 
         if (isGrounded && Input.GetKeyDown(KeyCode.Z))
         {
+            sounds.PlaySound(0, 0.5f);
             rb.velocity = new Vector2(rb.velocity.x, jumpSpeed);
         }
     }
@@ -209,6 +217,7 @@ public class PlayerControls : MonoBehaviour
                 isBlastJumpCooldownActive = false;
                 if (burstReadyParticles != null && !isDead)
                 {
+                    sounds.PlaySound(3, 0.7f);
                     burstReadyParticles.Play();
                 }
             }
@@ -240,7 +249,9 @@ public class PlayerControls : MonoBehaviour
     {
         if (isDead || isLevelWon) { yield break; }
 
+        sounds.PlaySound(1, 0.5f);
         rb.velocity = new Vector2(rb.velocity.x, windupJumpSpeed);
+
         if (preBlastTrail != null) { preBlastTrail.emitting = true; }
         yield return new WaitForSeconds(blastJumpWindupTime);
         if (preBlastTrail != null) { preBlastTrail.emitting = false; }
@@ -281,13 +292,12 @@ public class PlayerControls : MonoBehaviour
         GameObject postBurstObj = null;
         if (horizontalDirection != 0f || verticalDirection != 0f)
         {
+            sounds.PlaySound(2, 0.6f);
             rb.velocity = new Vector2(horizontalDirection * blastJumpSpeed, verticalDirection * blastJumpSpeed);
+
             Instantiate(burstParticles, this.transform.position, Quaternion.identity);
             postBurstObj = Instantiate(postBurstParticles, this.transform);
-            if (screenShakeObject != null)
-            {
-                screenShakeObject.DoShake(16f, 0.05f);
-            }
+            shake.DoShake(16f, 0.05f);
 
             ++consecutiveBlastJumps;
 
@@ -311,6 +321,7 @@ public class PlayerControls : MonoBehaviour
             isBlastJumpCooldownActive = false;
             if (burstReadyParticles != null && !isDead)
             {
+                sounds.PlaySound(3, 0.7f);
                 burstReadyParticles.Play();
             }
         }
@@ -359,15 +370,14 @@ public class PlayerControls : MonoBehaviour
         {
             if (currentHealth <= 0)
             {
-                if (screenShakeObject != null)
-                {
-                    screenShakeObject.DoShake(32f, 0.6f);
-                }
+                sounds.PlaySound(4, 0.6f);
+                shake.DoShake(32f, 0.6f);
                 Instantiate(deathExplosionParticles, this.transform.position, Quaternion.identity).gameObject.transform.parent = null;
                 currentHealth = 0;
                 sprite.color = Color.clear;
                 isDead = true;
-                if (scorekeeperObject != null) { scorekeeperObject.StopScorekeeper(); }
+                losePanel.SetActive(true);
+                score.StopScorekeeper();
             }
         }
     }
@@ -378,9 +388,12 @@ public class PlayerControls : MonoBehaviour
         {
             StopCoroutine("DoBlastJumpCR");
 
-            if (screenShakeObject != null) { screenShakeObject.DoShake(0f, 0f); }
+            shake.DoShake(0f, 0f);
 
-            if (scorekeeperObject != null) { scorekeeperObject.ResetScorekeeper(); }
+            losePanel.SetActive(false);
+            score.HideResultsScreen();
+            score.StopScorekeeper();
+            score.ResetScorekeeper();
 
             if (tempSlidingParticleSys != null)
             {
@@ -411,6 +424,14 @@ public class PlayerControls : MonoBehaviour
         }
     }
 
+    void DoTimerStart()
+    {
+        if (!isDead && !isLevelWon && !score.getIsActive() && rb.velocity.magnitude > 0f)
+        {
+            score.StartScorekeeper();
+        }
+    }
+
     void DoUIUpdate()
     {
         healthSlider.maxValue = maximumHealth;
@@ -419,6 +440,14 @@ public class PlayerControls : MonoBehaviour
         speedSlider.maxValue = speedLimit;
         speedSlider.value = (int)rb.velocity.magnitude;
         speedText.text = $"Speed: {(int)rb.velocity.magnitude}";
+        if (!isLevelWon)
+        {
+            redFXPanel.color = Color.Lerp(new Color(1f, 0f, 0f, 0f), new Color(1f, 0f, 0f, 0.5f), (1f - (((float)currentHealth) / ((float)maximumHealth))));
+        }
+        else
+        {
+            redFXPanel.color = Color.clear;
+        }
     }
 
     void OnTriggerEnter2D(Collider2D col)
@@ -426,12 +455,9 @@ public class PlayerControls : MonoBehaviour
         if (col.gameObject.tag == "Goal" && !isDead)
         {
             isLevelWon = true;
-            if (scorekeeperObject != null)
-            {
-                scorekeeperObject.StopScorekeeper();
-                scorekeeperObject.CalculateFinalScore(currentHealth, maximumHealth);
-                Debug.Log($"TIME: {scorekeeperObject.getTimeScore()}, FUSE: {scorekeeperObject.getFuseScore()}, TOTAL: {scorekeeperObject.getTotalScore()}");
-            }
+            score.StopScorekeeper();
+            score.CalculateFinalScore(currentHealth, maximumHealth);
+            score.ShowResultsScreen();
         }
     }
 }
