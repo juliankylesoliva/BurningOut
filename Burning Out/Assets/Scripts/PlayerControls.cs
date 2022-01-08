@@ -12,9 +12,12 @@ public class PlayerControls : MonoBehaviour
 
     /* EDITOR VARIABLES */
     [Header("Editor Variables")]
+    [SerializeField] Vector2 respawnPosition;
+
     [SerializeField] int currentHealth = 200;
     [SerializeField] int maximumHealth = 200;
     [SerializeField] int healthRegenRate = 1;
+    [SerializeField] int wallSlideHealthRegen = 3;
     [SerializeField] int speedHealthDrainRate = 2;
     [SerializeField] int baseBlastJumpHealthCost = 5;
 
@@ -38,25 +41,32 @@ public class PlayerControls : MonoBehaviour
 
     /* DRAG AND DROP */
     [Header("Drag and Drop")]
+    [SerializeField] ScreenShake screenShakeObject;
+    [SerializeField] Scorekeeper scorekeeperObject;
     [SerializeField] Transform groundCheckObject;
     [SerializeField] Transform wallCheckObjectR;
     [SerializeField] Transform wallCheckObjectL;
     [SerializeField] TMP_Text healthText;
     [SerializeField] Slider healthSlider;
     [SerializeField] TMP_Text speedText;
+    [SerializeField] Slider speedSlider;
     [SerializeField] TrailRenderer speedTrail;
+    [SerializeField] TrailRenderer preBlastTrail;
     [SerializeField] GameObject burstParticles;
     [SerializeField] GameObject postBurstParticles;
     [SerializeField] GameObject wallSlideParticles;
+    [SerializeField] GameObject deathExplosionParticles;
     [SerializeField] ParticleSystem burstReadyParticles;
 
     /* SCRIPT VARIABLES */
     private bool isDead = false;
+    private bool isLevelWon = false;
     private bool isGrounded = false;
     private bool isSliding = false;
     private bool isTouchingWallR = false;
     private bool isTouchingWallL = false;
     private bool isTouchingWall = false;
+    private ParticleSystem tempSlidingParticleSys = null;
     private bool isBlastJumping = false;
     private bool isBlastJumpCooldownActive = false;
     private int consecutiveBlastJumps = 0;
@@ -65,11 +75,14 @@ public class PlayerControls : MonoBehaviour
     {
         rb = this.gameObject.GetComponent<Rigidbody2D>();
         sprite = this.gameObject.GetComponent<SpriteRenderer>();
+        if (scorekeeperObject != null) { scorekeeperObject.ResetScorekeeper(); }
+        respawnPosition = this.transform.position;
         Application.targetFrameRate = 60;
     }
 
     void Update()
     {
+        DoRespawn();
         DoGroundCheck();
         DoWallCheck();
         DoMovement();
@@ -82,10 +95,19 @@ public class PlayerControls : MonoBehaviour
 
     void DoMovement()
     {
+        if (isLevelWon) { return; }
+
         if (isDead)
         {
             rb.simulated = false;
             return;
+        }
+        else
+        {
+            if (!rb.simulated)
+            {
+                rb.simulated = true;
+            }
         }
 
         if (!isBlastJumping)
@@ -96,7 +118,7 @@ public class PlayerControls : MonoBehaviour
             }
             else
             {
-                if (Input.GetAxis("Horizontal") * rb.velocity.x <= 0f)
+                if (Input.GetAxis("Horizontal") * rb.velocity.x < 0f)
                 {
                     rb.velocity += new Vector2(Input.GetAxis("Horizontal") * moveSpeed, 0f);
                 }
@@ -137,20 +159,11 @@ public class PlayerControls : MonoBehaviour
         isTouchingWallR = collidersR.Length > 0;
         isTouchingWallL = collidersL.Length > 0;
         isTouchingWall = (isTouchingWallR || isTouchingWallL);
-
-        if (isTouchingWall && isBlastJumpCooldownActive)
-        {
-            isBlastJumpCooldownActive = false;
-            if (burstReadyParticles != null && !isDead)
-            {
-                burstReadyParticles.Play();
-            }
-        }
     }
 
     void DoJumping()
     {
-        if (isDead) { return; }
+        if (isDead || isLevelWon) { return; }
 
         if (isGrounded && Input.GetKeyDown(KeyCode.Z))
         {
@@ -160,7 +173,7 @@ public class PlayerControls : MonoBehaviour
 
     void DoFalling()
     {
-        if (isDead) { return; }
+        if (isDead || isLevelWon) { return; }
 
         if (!isGrounded && rb.velocity.y < 0f)
         {
@@ -171,42 +184,73 @@ public class PlayerControls : MonoBehaviour
             rb.gravityScale = risingGravity;
         }
 
-        ParticleSystem tempParticleSys = null;
-        if (!isGrounded && rb.velocity.y < 0f && isTouchingWall && Input.GetKey(KeyCode.Z))
+        if (!isGrounded && rb.velocity.y < 0f && Input.GetKey(KeyCode.Z) && ((isTouchingWallR && Input.GetAxis("Horizontal") > 0f) || (isTouchingWallL && Input.GetAxis("Horizontal") < 0f)))
         {
             rb.velocity = new Vector2(0f, -wallSlideSpeed);
             isSliding = true;
+
+            if (tempSlidingParticleSys == null)
+            {
+                if (isTouchingWallR)
+                {
+                    GameObject tempObj = Instantiate(wallSlideParticles, wallCheckObjectR);
+                    tempSlidingParticleSys = tempObj.GetComponent<ParticleSystem>();
+                }
+                else if (isTouchingWallL)
+                {
+                    GameObject tempObj = Instantiate(wallSlideParticles, wallCheckObjectL);
+                    tempSlidingParticleSys = tempObj.GetComponent<ParticleSystem>();
+                }
+                else { /* Nothing */ }
+            }
+
+            if (isBlastJumpCooldownActive)
+            {
+                isBlastJumpCooldownActive = false;
+                if (burstReadyParticles != null && !isDead)
+                {
+                    burstReadyParticles.Play();
+                }
+            }
         }
         else
         {
             isSliding = false;
+            if (tempSlidingParticleSys != null)
+            {
+                tempSlidingParticleSys.gameObject.transform.parent = null;
+                tempSlidingParticleSys.Stop();
+                tempSlidingParticleSys = null;
+            }
         }
     }
 
     void DoBlastJump()
     {
-        if (isDead) { return; }
+        if (isDead || isLevelWon) { return; }
 
         if (!isBlastJumping && !isBlastJumpCooldownActive && Input.GetKeyDown(KeyCode.X))
         {
             isBlastJumping = true;
-            StartCoroutine(DoBlastJumpCR());
+            StartCoroutine("DoBlastJumpCR");
         }
     }
 
     IEnumerator DoBlastJumpCR()
     {
-        if (isDead) { yield break; }
+        if (isDead || isLevelWon) { yield break; }
 
         rb.velocity = new Vector2(rb.velocity.x, windupJumpSpeed);
+        if (preBlastTrail != null) { preBlastTrail.emitting = true; }
         yield return new WaitForSeconds(blastJumpWindupTime);
+        if (preBlastTrail != null) { preBlastTrail.emitting = false; }
 
         float horizontalDirection;
-        if (Input.GetKey(KeyCode.LeftArrow))
+        if (Input.GetAxis("Horizontal") < 0f)
         {
             horizontalDirection = -1f;
         }
-        else if (Input.GetKey(KeyCode.RightArrow))
+        else if (Input.GetAxis("Horizontal") > 0f)
         {
             horizontalDirection = 1f;
         }
@@ -216,11 +260,11 @@ public class PlayerControls : MonoBehaviour
         }
 
         float verticalDirection;
-        if (Input.GetKey(KeyCode.DownArrow))
+        if (Input.GetAxis("Vertical") < 0f)
         {
             verticalDirection = -1f;
         }
-        else if (Input.GetKey(KeyCode.UpArrow))
+        else if (Input.GetAxis("Vertical") > 0f)
         {
             verticalDirection = 1f;
         }
@@ -240,10 +284,14 @@ public class PlayerControls : MonoBehaviour
             rb.velocity = new Vector2(horizontalDirection * blastJumpSpeed, verticalDirection * blastJumpSpeed);
             Instantiate(burstParticles, this.transform.position, Quaternion.identity);
             postBurstObj = Instantiate(postBurstParticles, this.transform);
+            if (screenShakeObject != null)
+            {
+                screenShakeObject.DoShake(16f, 0.05f);
+            }
 
             ++consecutiveBlastJumps;
 
-            changeHealthBy((int)(-(baseBlastJumpHealthCost + (baseBlastJumpHealthCost * Mathf.Pow(2f, (float)consecutiveBlastJumps)))));
+            changeHealthBy((int)(-(baseBlastJumpHealthCost + (baseBlastJumpHealthCost * Mathf.Pow(2f, (float)(consecutiveBlastJumps - 1))))));
         }
 
         yield return new WaitForSeconds(blastJumpRecoveryTime);
@@ -253,6 +301,7 @@ public class PlayerControls : MonoBehaviour
         if (postBurstObj != null)
         {
             postBurstObj.transform.parent = null;
+            postBurstObj.GetComponent<ParticleSystem>().Stop();
         }
 
         yield return new WaitForSeconds(blastJumpCooldownTime);
@@ -271,7 +320,7 @@ public class PlayerControls : MonoBehaviour
 
     void DoHealthDrainRegen()
     {
-        if (isDead) { return; }
+        if (isDead || isLevelWon) { return; }
 
         if (rb.velocity.magnitude >= speedLimit)
         {
@@ -283,13 +332,20 @@ public class PlayerControls : MonoBehaviour
         {
             sprite.color = Color.white;
             if (speedTrail != null) { speedTrail.emitting = false; }
-            changeHealthBy(healthRegenRate);
+            if (isSliding)
+            {
+                changeHealthBy(wallSlideHealthRegen);
+            }
+            else
+            {
+                changeHealthBy(healthRegenRate);
+            }
         }
     }
 
     void changeHealthBy(int amount)
     {
-        if (isDead) { return; }
+        if (isDead || isLevelWon) { return; }
 
         currentHealth += amount;
         if (amount > 0)
@@ -303,9 +359,55 @@ public class PlayerControls : MonoBehaviour
         {
             if (currentHealth <= 0)
             {
+                if (screenShakeObject != null)
+                {
+                    screenShakeObject.DoShake(32f, 0.6f);
+                }
+                Instantiate(deathExplosionParticles, this.transform.position, Quaternion.identity).gameObject.transform.parent = null;
                 currentHealth = 0;
+                sprite.color = Color.clear;
                 isDead = true;
+                if (scorekeeperObject != null) { scorekeeperObject.StopScorekeeper(); }
             }
+        }
+    }
+
+    void DoRespawn()
+    {
+        if (Input.GetKeyDown(KeyCode.R))
+        {
+            StopCoroutine("DoBlastJumpCR");
+
+            if (screenShakeObject != null) { screenShakeObject.DoShake(0f, 0f); }
+
+            if (scorekeeperObject != null) { scorekeeperObject.ResetScorekeeper(); }
+
+            if (tempSlidingParticleSys != null)
+            {
+                tempSlidingParticleSys.gameObject.transform.parent = null;
+                tempSlidingParticleSys.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+                tempSlidingParticleSys = null;
+            }
+
+            sprite.color = Color.white;
+            if (speedTrail != null) { speedTrail.emitting = false; }
+            if (preBlastTrail != null) { preBlastTrail.emitting = false; }
+
+            this.transform.position = respawnPosition;
+            currentHealth = maximumHealth;
+            rb.velocity = Vector2.zero;
+            isDead = false;
+            isGrounded = false;
+            isSliding = false;
+            isTouchingWallR = false;
+            isTouchingWallL = false;
+            isTouchingWall = false;
+            tempSlidingParticleSys = null;
+            isBlastJumping = false;
+            isBlastJumpCooldownActive = false;
+            consecutiveBlastJumps = 0;
+            isLevelWon = false;
+            isDead = false;
         }
     }
 
@@ -313,7 +415,23 @@ public class PlayerControls : MonoBehaviour
     {
         healthSlider.maxValue = maximumHealth;
         healthSlider.value = currentHealth;
-        healthText.text = $"{currentHealth} HP";
-        speedText.text = $"Speed: {(int)rb.velocity.magnitude} / {speedLimit}";
+        healthText.text = $"Fuse: {currentHealth}";
+        speedSlider.maxValue = speedLimit;
+        speedSlider.value = (int)rb.velocity.magnitude;
+        speedText.text = $"Speed: {(int)rb.velocity.magnitude}";
+    }
+
+    void OnTriggerEnter2D(Collider2D col)
+    {
+        if (col.gameObject.tag == "Goal" && !isDead)
+        {
+            isLevelWon = true;
+            if (scorekeeperObject != null)
+            {
+                scorekeeperObject.StopScorekeeper();
+                scorekeeperObject.CalculateFinalScore(currentHealth, maximumHealth);
+                Debug.Log($"TIME: {scorekeeperObject.getTimeScore()}, FUSE: {scorekeeperObject.getFuseScore()}, TOTAL: {scorekeeperObject.getTotalScore()}");
+            }
+        }
     }
 }
