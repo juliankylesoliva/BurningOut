@@ -65,14 +65,21 @@ public class PlayerControls : MonoBehaviour
     private bool isDead = false;
     private bool isLevelWon = false;
     private bool isGrounded = false;
+    private bool isFalling = false;
     private bool isSliding = false;
     private bool isTouchingWallR = false;
     private bool isTouchingWallL = false;
     private bool isTouchingWall = false;
     private ParticleSystem tempSlidingParticleSys = null;
     private bool isBlastJumping = false;
+    private bool isBlastJumpRecoveryActive = false;
     private bool isBlastJumpCooldownActive = false;
     private int consecutiveBlastJumps = 0;
+
+    private PlayerStates _createPlayerStatesObject()
+    {
+        return new PlayerStates(isDead, isLevelWon, isGrounded, isFalling, isSliding, isTouchingWallR, isTouchingWallL, isTouchingWall, isBlastJumping, isBlastJumpRecoveryActive, isBlastJumpCooldownActive);
+    }
 
     void Awake()
     {
@@ -87,16 +94,18 @@ public class PlayerControls : MonoBehaviour
 
     void Update()
     {
-        DoRespawn();
         DoGroundCheck();
+        DoFalling();
         DoWallCheck();
+        DoWallSlide();
         DoMovement();
         DoJumping();
+        DoBlastJumpCooldownReset();
         DoBlastJump();
-        DoFalling();
         DoHealthDrainRegen();
         DoUIUpdate();
         DoTimerStart();
+        DoRespawn();
     }
 
     void DoMovement()
@@ -124,9 +133,9 @@ public class PlayerControls : MonoBehaviour
             }
             else
             {
-                if (Input.GetAxis("Horizontal") * rb.velocity.x < 0f)
+                if (Input.GetAxis("Horizontal") * rb.velocity.x <= 0f)
                 {
-                    rb.velocity += new Vector2(Input.GetAxis("Horizontal") * moveSpeed, 0f);
+                    rb.velocity = new Vector2(Input.GetAxis("Horizontal") * moveSpeed, 0f);
                 }
             }
         }
@@ -139,16 +148,6 @@ public class PlayerControls : MonoBehaviour
         isGrounded = false;
         Collider2D[] colliders = Physics2D.OverlapCircleAll(groundCheckObject.position, groundCheckRadius, groundLayer);
         isGrounded = (colliders.Length > 0);
-
-        if (isGrounded && isBlastJumpCooldownActive)
-        {
-            isBlastJumpCooldownActive = false;
-            if (burstReadyParticles != null && !isDead)
-            {
-                sounds.PlaySound(3, 0.7f);
-                burstReadyParticles.Play();
-            }
-        }
 
         if (isGrounded)
         {
@@ -183,16 +182,24 @@ public class PlayerControls : MonoBehaviour
     {
         if (isDead || isLevelWon) { return; }
 
+        isFalling = false;
         if (!isGrounded && rb.velocity.y < 0f)
         {
+            isFalling = true;
             rb.gravityScale = fallingGravity;
         }
         else
         {
+            isFalling = false;
             rb.gravityScale = risingGravity;
         }
+    }
 
-        if (!isGrounded && rb.velocity.y < 0f && Input.GetKey(KeyCode.Z) && ((isTouchingWallR && Input.GetAxis("Horizontal") > 0f) || (isTouchingWallL && Input.GetAxis("Horizontal") < 0f)))
+    void DoWallSlide()
+    {
+        if (isDead) { return; }
+
+        if (isFalling && Input.GetKey(KeyCode.Z) && ((isTouchingWallR && Input.GetAxis("Horizontal") > 0f) || (isTouchingWallL && Input.GetAxis("Horizontal") < 0f)))
         {
             rb.velocity = new Vector2(0f, -wallSlideSpeed);
             isSliding = true;
@@ -210,16 +217,6 @@ public class PlayerControls : MonoBehaviour
                     tempSlidingParticleSys = tempObj.GetComponent<ParticleSystem>();
                 }
                 else { /* Nothing */ }
-            }
-
-            if (isBlastJumpCooldownActive)
-            {
-                isBlastJumpCooldownActive = false;
-                if (burstReadyParticles != null && !isDead)
-                {
-                    sounds.PlaySound(3, 0.7f);
-                    burstReadyParticles.Play();
-                }
             }
         }
         else
@@ -301,18 +298,22 @@ public class PlayerControls : MonoBehaviour
 
             ++consecutiveBlastJumps;
 
-            changeHealthBy((int)(-(baseBlastJumpHealthCost + (baseBlastJumpHealthCost * Mathf.Pow(2f, (float)(consecutiveBlastJumps - 1))))));
+            changeHealthBy((int)(-baseBlastJumpHealthCost * Mathf.Pow(2f, (float)(consecutiveBlastJumps - 1))));
         }
 
+        isBlastJumpRecoveryActive = true;
         yield return new WaitForSeconds(blastJumpRecoveryTime);
+        isBlastJumpRecoveryActive = false;
 
-        isBlastJumping = false;
-        isBlastJumpCooldownActive = true;
         if (postBurstObj != null)
         {
             postBurstObj.transform.parent = null;
             postBurstObj.GetComponent<ParticleSystem>().Stop();
         }
+
+        isBlastJumping = false;
+        isBlastJumpCooldownActive = true;
+        
 
         yield return new WaitForSeconds(blastJumpCooldownTime);
 
@@ -327,6 +328,22 @@ public class PlayerControls : MonoBehaviour
         }
 
         yield break;
+    }
+
+    void DoBlastJumpCooldownReset()
+    {
+        if (isDead) { return; }
+
+        if (isBlastJumpCooldownActive && (isGrounded || isSliding))
+        {
+            StopCoroutine("DoBlastJumpCR");
+            isBlastJumpCooldownActive = false;
+            if (burstReadyParticles != null && !isDead)
+            {
+                sounds.PlaySound(3, 0.7f);
+                burstReadyParticles.Play();
+            }
+        }
     }
 
     void DoHealthDrainRegen()
@@ -411,16 +428,17 @@ public class PlayerControls : MonoBehaviour
             rb.velocity = Vector2.zero;
             isDead = false;
             isGrounded = false;
+            isFalling = false;
             isSliding = false;
             isTouchingWallR = false;
             isTouchingWallL = false;
             isTouchingWall = false;
             tempSlidingParticleSys = null;
             isBlastJumping = false;
+            isBlastJumpRecoveryActive = false;
             isBlastJumpCooldownActive = false;
             consecutiveBlastJumps = 0;
             isLevelWon = false;
-            isDead = false;
         }
     }
 
