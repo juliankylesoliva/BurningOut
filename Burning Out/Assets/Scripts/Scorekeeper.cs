@@ -30,6 +30,9 @@ public class Scorekeeper : MonoBehaviour
     [SerializeField] TMP_Text fuseResultText;
     [SerializeField] TMP_Text totalResultText;
 
+    private int clearHoldTime = 300;
+    private int currentClearHoldTime = 0;
+
     void Awake()
     {
         if (PlayerPrefs.GetInt("hiScoreTotal", -1) != -1)
@@ -73,14 +76,27 @@ public class Scorekeeper : MonoBehaviour
             timerText.text = $"{timeSpent:N1}";
         }
 
-        if (Input.GetKeyDown(KeyCode.C))
+        if (Input.GetKey(KeyCode.C))
         {
-            hiScoreTotal = 0;
-            PlayerPrefs.SetInt("hiScoreTotal", hiScoreTotal);
-            hiScoreTime = 999f;
-            PlayerPrefs.SetFloat("hiScoreTime", hiScoreTime);
-            hiScoreFuse = 999;
-            PlayerPrefs.SetInt("hiScoreFuse", hiScoreFuse);
+            if (currentClearHoldTime == clearHoldTime)
+            {
+                hiScoreTotal = 0;
+                PlayerPrefs.SetInt("hiScoreTotal", hiScoreTotal);
+                hiScoreTime = 999f;
+                PlayerPrefs.SetFloat("hiScoreTime", hiScoreTime);
+                hiScoreFuse = 999;
+                PlayerPrefs.SetInt("hiScoreFuse", hiScoreFuse);
+                highScoreText.text = $"HIGH SCORE: {hiScoreTotal} pts ({hiScoreTime:N1} sec) ({hiScoreFuse} fuse)";
+            }
+            else
+            {
+                highScoreText.text = $"Keep holding C key to reset high score...";
+                currentClearHoldTime++;
+            }
+        }
+        else
+        {
+            currentClearHoldTime = 0;
             highScoreText.text = $"HIGH SCORE: {hiScoreTotal} pts ({hiScoreTime:N1} sec) ({hiScoreFuse} fuse)";
         }
     }

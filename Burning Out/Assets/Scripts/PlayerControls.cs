@@ -12,9 +12,12 @@ public class PlayerControls : MonoBehaviour
     Scorekeeper score;
     ScreenShake shake;
     SoundPlayer sounds;
+    PlayerParticles particles;
 
     /* EDITOR VARIABLES */
     [Header("Editor Variables")]
+    [SerializeField] int FPS = 60;
+
     [SerializeField] Vector2 respawnPosition;
 
     [SerializeField] int currentHealth = 200;
@@ -41,6 +44,7 @@ public class PlayerControls : MonoBehaviour
     [SerializeField] float blastJumpCooldownTime = 0.8f;
     [SerializeField] float windupJumpSpeed = 4f;
     [SerializeField] float blastJumpSpeed = 16f;
+    [SerializeField] int midairJumpPenaltyMultiplier = 2;
 
     /* DRAG AND DROP */
     [Header("Drag and Drop")]
@@ -53,43 +57,39 @@ public class PlayerControls : MonoBehaviour
     [SerializeField] Slider speedSlider;
     [SerializeField] Image redFXPanel;
     [SerializeField] GameObject losePanel;
-    [SerializeField] TrailRenderer speedTrail;
-    [SerializeField] TrailRenderer preBlastTrail;
-    [SerializeField] GameObject burstParticles;
-    [SerializeField] GameObject postBurstParticles;
-    [SerializeField] GameObject wallSlideParticles;
-    [SerializeField] GameObject deathExplosionParticles;
-    [SerializeField] ParticleSystem burstReadyParticles;
 
     /* SCRIPT VARIABLES */
+    private bool isFacingRight = true;
     private bool isDead = false;
     private bool isLevelWon = false;
     private bool isGrounded = false;
+    private bool isMoving = false;
     private bool isFalling = false;
     private bool isSliding = false;
+    private bool isAboveSpeedLimit = false;
     private bool isTouchingWallR = false;
     private bool isTouchingWallL = false;
     private bool isTouchingWall = false;
-    private ParticleSystem tempSlidingParticleSys = null;
     private bool isBlastJumping = false;
     private bool isBlastJumpRecoveryActive = false;
     private bool isBlastJumpCooldownActive = false;
     private int consecutiveBlastJumps = 0;
 
-    private PlayerStates _createPlayerStatesObject()
+    public PlayerStates getPlayerStatesObject()
     {
-        return new PlayerStates(isDead, isLevelWon, isGrounded, isFalling, isSliding, isTouchingWallR, isTouchingWallL, isTouchingWall, isBlastJumping, isBlastJumpRecoveryActive, isBlastJumpCooldownActive);
+        return new PlayerStates(isFacingRight, isDead, isLevelWon, isGrounded, isMoving, isFalling, isSliding, isAboveSpeedLimit, isTouchingWallR, isTouchingWallL, isTouchingWall, isBlastJumping, isBlastJumpRecoveryActive, isBlastJumpCooldownActive);
     }
 
     void Awake()
     {
+        Application.targetFrameRate = FPS;
         rb = this.gameObject.GetComponent<Rigidbody2D>();
         sprite = this.gameObject.GetComponent<SpriteRenderer>();
         shake = this.gameObject.GetComponent<ScreenShake>();
         score = this.gameObject.GetComponent<Scorekeeper>();
         sounds = this.gameObject.GetComponent<SoundPlayer>();
+        particles = this.gameObject.GetComponent<PlayerParticles>();
         respawnPosition = this.transform.position;
-        Application.targetFrameRate = 60;
     }
 
     void Update()
@@ -99,13 +99,16 @@ public class PlayerControls : MonoBehaviour
         DoWallCheck();
         DoWallSlide();
         DoMovement();
+        DoMovementCheck();
         DoJumping();
         DoBlastJumpCooldownReset();
         DoBlastJump();
         DoHealthDrainRegen();
+        DoDirectionCheck();
         DoUIUpdate();
         DoTimerStart();
         DoRespawn();
+        DoQuit();
     }
 
     void DoMovement()
@@ -135,17 +138,30 @@ public class PlayerControls : MonoBehaviour
             {
                 if (Input.GetAxis("Horizontal") * rb.velocity.x <= 0f)
                 {
-                    rb.velocity = new Vector2(Input.GetAxis("Horizontal") * moveSpeed, 0f);
+                    rb.velocity = new Vector2(Input.GetAxis("Horizontal") * moveSpeed, rb.velocity.y);
                 }
             }
         }
     }
 
+    void DoDirectionCheck()
+    {
+        if (rb.velocity.x != 0f)
+        {
+            isFacingRight = rb.velocity.x > 0f;
+        }
+    }
+
+    void DoMovementCheck()
+    {
+        isMoving = rb.velocity.magnitude > 0f;
+    }
+
     void DoGroundCheck()
     {
+        isGrounded = false;
         if (isDead) { return; }
 
-        isGrounded = false;
         Collider2D[] colliders = Physics2D.OverlapCircleAll(groundCheckObject.position, groundCheckRadius, groundLayer);
         isGrounded = (colliders.Length > 0);
 
@@ -157,9 +173,9 @@ public class PlayerControls : MonoBehaviour
 
     void DoWallCheck()
     {
+        isTouchingWall = false;
         if (isDead) { return; }
 
-        isTouchingWall = false;
         Collider2D[] collidersR = Physics2D.OverlapCircleAll(wallCheckObjectR.position, groundCheckRadius, groundLayer);
         Collider2D[] collidersL = Physics2D.OverlapCircleAll(wallCheckObjectL.position, groundCheckRadius, groundLayer);
         isTouchingWallR = collidersR.Length > 0;
@@ -180,9 +196,9 @@ public class PlayerControls : MonoBehaviour
 
     void DoFalling()
     {
+        isFalling = false;
         if (isDead || isLevelWon) { return; }
 
-        isFalling = false;
         if (!isGrounded && rb.velocity.y < 0f)
         {
             isFalling = true;
@@ -197,37 +213,17 @@ public class PlayerControls : MonoBehaviour
 
     void DoWallSlide()
     {
-        if (isDead) { return; }
+        isSliding = false;
+        if (isDead || isLevelWon) { return; }
 
         if (isFalling && Input.GetKey(KeyCode.Z) && ((isTouchingWallR && Input.GetAxis("Horizontal") > 0f) || (isTouchingWallL && Input.GetAxis("Horizontal") < 0f)))
         {
             rb.velocity = new Vector2(0f, -wallSlideSpeed);
             isSliding = true;
-
-            if (tempSlidingParticleSys == null)
-            {
-                if (isTouchingWallR)
-                {
-                    GameObject tempObj = Instantiate(wallSlideParticles, wallCheckObjectR);
-                    tempSlidingParticleSys = tempObj.GetComponent<ParticleSystem>();
-                }
-                else if (isTouchingWallL)
-                {
-                    GameObject tempObj = Instantiate(wallSlideParticles, wallCheckObjectL);
-                    tempSlidingParticleSys = tempObj.GetComponent<ParticleSystem>();
-                }
-                else { /* Nothing */ }
-            }
         }
         else
         {
             isSliding = false;
-            if (tempSlidingParticleSys != null)
-            {
-                tempSlidingParticleSys.gameObject.transform.parent = null;
-                tempSlidingParticleSys.Stop();
-                tempSlidingParticleSys = null;
-            }
         }
     }
 
@@ -235,7 +231,7 @@ public class PlayerControls : MonoBehaviour
     {
         if (isDead || isLevelWon) { return; }
 
-        if (!isBlastJumping && !isBlastJumpCooldownActive && Input.GetKeyDown(KeyCode.X))
+        if (!isBlastJumping && !isBlastJumpRecoveryActive && !isBlastJumpCooldownActive && Input.GetKeyDown(KeyCode.X))
         {
             isBlastJumping = true;
             StartCoroutine("DoBlastJumpCR");
@@ -249,9 +245,7 @@ public class PlayerControls : MonoBehaviour
         sounds.PlaySound(1, 0.5f);
         rb.velocity = new Vector2(rb.velocity.x, windupJumpSpeed);
 
-        if (preBlastTrail != null) { preBlastTrail.emitting = true; }
         yield return new WaitForSeconds(blastJumpWindupTime);
-        if (preBlastTrail != null) { preBlastTrail.emitting = false; }
 
         float horizontalDirection;
         if (Input.GetAxis("Horizontal") < 0f)
@@ -286,31 +280,22 @@ public class PlayerControls : MonoBehaviour
             verticalDirection = 0.5f;
         }
 
-        GameObject postBurstObj = null;
         if (horizontalDirection != 0f || verticalDirection != 0f)
         {
             sounds.PlaySound(2, 0.6f);
             rb.velocity = new Vector2(horizontalDirection * blastJumpSpeed, verticalDirection * blastJumpSpeed);
 
-            Instantiate(burstParticles, this.transform.position, Quaternion.identity);
-            postBurstObj = Instantiate(postBurstParticles, this.transform);
             shake.DoShake(16f, 0.05f);
 
             ++consecutiveBlastJumps;
 
-            changeHealthBy((int)(-baseBlastJumpHealthCost * Mathf.Pow(2f, (float)(consecutiveBlastJumps - 1))));
+            changeHealthBy((int)(-baseBlastJumpHealthCost * Mathf.Pow((float)midairJumpPenaltyMultiplier, (float)(consecutiveBlastJumps - 1))));
+
+            isBlastJumpRecoveryActive = true;
+            yield return new WaitForSeconds(blastJumpRecoveryTime);
         }
 
-        isBlastJumpRecoveryActive = true;
-        yield return new WaitForSeconds(blastJumpRecoveryTime);
         isBlastJumpRecoveryActive = false;
-
-        if (postBurstObj != null)
-        {
-            postBurstObj.transform.parent = null;
-            postBurstObj.GetComponent<ParticleSystem>().Stop();
-        }
-
         isBlastJumping = false;
         isBlastJumpCooldownActive = true;
         
@@ -320,10 +305,10 @@ public class PlayerControls : MonoBehaviour
         if (isBlastJumpCooldownActive)
         {
             isBlastJumpCooldownActive = false;
-            if (burstReadyParticles != null && !isDead)
+            if (!isDead)
             {
+                particles.PlayBlastJumpRefresh();
                 sounds.PlaySound(3, 0.7f);
-                burstReadyParticles.Play();
             }
         }
 
@@ -338,10 +323,10 @@ public class PlayerControls : MonoBehaviour
         {
             StopCoroutine("DoBlastJumpCR");
             isBlastJumpCooldownActive = false;
-            if (burstReadyParticles != null && !isDead)
+            if (!isDead)
             {
+                particles.PlayBlastJumpRefresh();
                 sounds.PlaySound(3, 0.7f);
-                burstReadyParticles.Play();
             }
         }
     }
@@ -352,21 +337,20 @@ public class PlayerControls : MonoBehaviour
 
         if (rb.velocity.magnitude >= speedLimit)
         {
-            sprite.color = speedLimitCharColor;
-            if (speedTrail != null) { speedTrail.emitting = true; }
-            changeHealthBy(-speedHealthDrainRate);
+            isAboveSpeedLimit = true;
+            changeHealthBy((int)(-speedHealthDrainRate * Time.deltaTime * FPS));
         }
         else
         {
             sprite.color = Color.white;
-            if (speedTrail != null) { speedTrail.emitting = false; }
+            isAboveSpeedLimit = false;
             if (isSliding)
             {
-                changeHealthBy(wallSlideHealthRegen);
+                changeHealthBy((int)(wallSlideHealthRegen * Time.deltaTime * FPS));
             }
             else
             {
-                changeHealthBy(healthRegenRate);
+                changeHealthBy((int)(healthRegenRate * Time.deltaTime * FPS));
             }
         }
     }
@@ -387,9 +371,8 @@ public class PlayerControls : MonoBehaviour
         {
             if (currentHealth <= 0)
             {
-                sounds.PlaySound(4, 0.6f);
+                sounds.PlaySound(4, 0.4f);
                 shake.DoShake(32f, 0.6f);
-                Instantiate(deathExplosionParticles, this.transform.position, Quaternion.identity).gameObject.transform.parent = null;
                 currentHealth = 0;
                 sprite.color = Color.clear;
                 isDead = true;
@@ -412,33 +395,27 @@ public class PlayerControls : MonoBehaviour
             score.StopScorekeeper();
             score.ResetScorekeeper();
 
-            if (tempSlidingParticleSys != null)
-            {
-                tempSlidingParticleSys.gameObject.transform.parent = null;
-                tempSlidingParticleSys.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
-                tempSlidingParticleSys = null;
-            }
-
             sprite.color = Color.white;
-            if (speedTrail != null) { speedTrail.emitting = false; }
-            if (preBlastTrail != null) { preBlastTrail.emitting = false; }
 
             this.transform.position = respawnPosition;
             currentHealth = maximumHealth;
             rb.velocity = Vector2.zero;
+
+            isFacingRight = true;
             isDead = false;
+            isLevelWon = false;
             isGrounded = false;
+            isMoving = false;
             isFalling = false;
             isSliding = false;
+            isAboveSpeedLimit = false;
             isTouchingWallR = false;
             isTouchingWallL = false;
             isTouchingWall = false;
-            tempSlidingParticleSys = null;
             isBlastJumping = false;
             isBlastJumpRecoveryActive = false;
             isBlastJumpCooldownActive = false;
             consecutiveBlastJumps = 0;
-            isLevelWon = false;
         }
     }
 
@@ -458,6 +435,7 @@ public class PlayerControls : MonoBehaviour
         speedSlider.maxValue = speedLimit;
         speedSlider.value = (int)rb.velocity.magnitude;
         speedText.text = $"Speed: {(int)rb.velocity.magnitude}";
+
         if (!isLevelWon)
         {
             redFXPanel.color = Color.Lerp(new Color(1f, 0f, 0f, 0f), new Color(1f, 0f, 0f, 0.5f), (1f - (((float)currentHealth) / ((float)maximumHealth))));
@@ -465,6 +443,14 @@ public class PlayerControls : MonoBehaviour
         else
         {
             redFXPanel.color = Color.clear;
+        }
+    }
+
+    void DoQuit()
+    {
+        if (Input.GetKeyDown(KeyCode.Escape))
+        {
+            Application.Quit();
         }
     }
 
